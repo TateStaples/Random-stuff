@@ -16,7 +16,6 @@ class Image_processor:
     def __init__(self, img_path):
         self.img = cv2.imread(img_path)
         gray = cv2.cvtColor(self.img, cv2.COLOR_RGB2GRAY)
-        print(gray[:2, :2])
         self.board = []
 
     def run(self):
@@ -85,8 +84,24 @@ class Image_processor:
         placed = list(set(placed))
         cv2.imwrite('res.png', img_rgb)
         return placed
-        print(len(placed))
 
+    def template_identify(self, img):
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        im_paths = [f"data/Tile_images/Scrabble-tile-{letter}-wood.jpg" for letter in alphabet]
+        max_val = 0
+        best_letter = ""
+        for path, letter in zip(im_paths, alphabet):
+            img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            template = cv2.imread(path, 0)
+            scale = img_gray.shape[1] / 25
+            template = imutils.resize(template, width=int(scale))
+            w, h = template.shape[::-1]
+            res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
+            (_, maxVal, _, maxLoc) = cv2.minMaxLoc(res)
+            if maxVal > max_val:
+                max_val = maxVal
+                best_letter = letter
+        return best_letter
     def online_image(self):
         # https://stackoverflow.com/questions/48954246/find-sudoku-grid-using-opencv-and-python
         gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
@@ -236,40 +251,62 @@ class Image_processor:
                         [1, 0]])
         br = np.array([[0, 1],
                        [1, 1]])
+        tr = np.array([[1, 1],
+                       [0, 1]])
+        bl = np.array([[1, 0],
+                       [1, 1]])
         tl = np.kron(tl, np.ones((row, col)))
         br = np.kron(br, np.ones((row, col)))
+        tr = np.kron(tr, np.ones((row, col)))
+        bl = np.kron(bl, np.ones((row, col)))
         #print(tl.shape)
         tl *= 255
         br *= 255
+        bl *= 255
+        tr *= 255
         tl = cv2.cvtColor(tl.astype(np.uint8), cv2.COLOR_GRAY2BGR)
         br = cv2.cvtColor(br.astype(np.uint8), cv2.COLOR_GRAY2BGR)
-        cv2.imwrite("tl.jpg", tl)
-        return tl, br
-
+        bl = cv2.cvtColor(bl.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        tr = cv2.cvtColor(tr.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        return tl, tr, bl, br
 
     def grid(self):
-        pass
-
+        (x1, y1), (x2, y2) = self.get_corners()
+        img = self.img[y1:y2, x1:x2]
+        self.draw_grid(img, self.rows, self.cols)
+        imgs = self.crop(img, self.rows, self.cols)
+        cv2.imwrite("section.jpg", imgs[63])
+        imgs[63] = cv2.cvtColor(imgs[63], cv2.COLOR_RGB2GRAY)
+        self.create_neural_network()
+        print(self.nn.predict([cv2.resize(imgs[63], (28, 28))]))
+        print(self.template_identify(imgs[63]))
 
     def get_corners(self):
-        tl, br = self.generate_corners(30, 30)
+        size = 27
+        tl, tr, bl, br = self.generate_corners(size, size)
+        size *= 2
         #self.multi_scale_template(self.img, tl)
         result = cv2.matchTemplate(self.img, tl, cv2.TM_CCOEFF)
         (_, maxVal, _, maxLoc) = cv2.minMaxLoc(result)
         x1, y1 = maxLoc
-        result = cv2.matchTemplate(self.img, br, cv2.TM_CCOEFF)
+        rect(self.img, x1, y1, size, size, (0, 255, 0))
+        result = cv2.matchTemplate(self.img, tr, cv2.TM_CCOEFF)
         (_, maxVal, _, maxLoc) = cv2.minMaxLoc(result)
         x2, y2 = maxLoc
-        return (x1, y1), (x2, y2)
+        rect(self.img, x2, y2, size, size, (0, 255, 0))
+        result = cv2.matchTemplate(self.img, bl, cv2.TM_CCOEFF)
+        (_, maxVal, _, maxLoc) = cv2.minMaxLoc(result)
+        x3, y3 = maxLoc
+        rect(self.img, x3, y3, size, size, (0, 255, 0))
+        result = cv2.matchTemplate(self.img, br, cv2.TM_CCOEFF)
+        (_, maxVal, _, maxLoc) = cv2.minMaxLoc(result)
+        x4, y4 = maxLoc
+        rect(self.img, x4, y4, size, size, (0, 255, 0))
+        x1, y1 = min([x1+size, x3+size]), min([y1+size, y2+size])
+        x2, y2 = max([x2, x4]), max([y3, y4])
         cv2.rectangle(self.img, (x1, y1), (x2, y2), (255, 0, 0), 3)
-        x_step = w / cols
-        y_step = h / rows
-        imgs = []
-        for r in range(rows):
-            for c in range(cols):
-                x1 = int(c * x_step)
-                y1 = int(r * y_step)
         cv2.imwrite("corners.jpg", self.img)
+        return (x1, y1), (x2, y2)
 
 
     def multi_scale_template(self, img, template):
@@ -307,17 +344,82 @@ class Image_processor:
         print(startX, endX)
         cv2.imwrite("Image.jpg", img)
 
-    def crop(self, img, rows, cols):
+    @staticmethod
+    def draw_grid(img, rows, cols):
         h, w = img.shape[:2]
         x_step = w/cols
         y_step = h/rows
+        for c in range(1, cols):
+            x = int(c * x_step)
+            cv2.line(img, (x, 0), (x, h-1), (0, 255, 0), 3)
+        for r in range(1, rows):
+            y = int(r*y_step)
+            cv2.line(img, (0, y), (w-1, y), (0, 255, 0), 3)
+        cv2.imwrite("grid.jpg", img)
+
+    @staticmethod
+    def crop(img, rows, cols):
+        h, w = img.shape[:2]
+        x_step = w / cols
+        y_step = h / rows
         imgs = []
         for r in range(rows):
             for c in range(cols):
-                x1 = int(c*x_step)
-                y1 = int(r*y_step)
+                x1 = int(c * x_step)
+                y1 = int(r * y_step)
                 x2 = int(x1 + x_step)
                 y2 = int(y1 + y_step)
                 section = img[y1: y2, x1: x2]
                 imgs.append(section)
-        cv2.imwrite("cropped.jpg", imgs[0])
+        return imgs
+
+    def perspective_warp(self):
+        # Read the images to be aligned
+        im1 = cv2.imread("data/empty_scrabble.jpg")
+        im2 = cv2.imread("data/angled_scrabble.jpg")
+
+        # Convert images to grayscale
+        im1_gray = cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY)
+        im2_gray = cv2.cvtColor(im2, cv2.COLOR_BGR2GRAY)
+
+        # Find size of image1
+        sz = im1.shape
+
+        # Define the motion model
+        warp_mode = cv2.MOTION_TRANSLATION
+
+        # Define 2x3 or 3x3 matrices and initialize the matrix to identity
+        if warp_mode == cv2.MOTION_HOMOGRAPHY:
+            warp_matrix = np.eye(3, 3, dtype=np.float32)
+        else:
+            warp_matrix = np.eye(2, 3, dtype=np.float32)
+
+        # Specify the number of iterations.
+        number_of_iterations = 5000
+
+        # Specify the threshold of the increment
+        # in the correlation coefficient between two iterations
+        termination_eps = 1e-10
+
+        # Define termination criteria
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations, termination_eps)
+
+        # Run the ECC algorithm. The results are stored in warp_matrix.
+        (cc, warp_matrix) = cv2.findTransformECC(im1_gray, im2_gray, warp_matrix, warp_mode, criteria, 1, 1)
+
+        if warp_mode == cv2.MOTION_HOMOGRAPHY:
+            # Use warpPerspective for Homography
+            im2_aligned = cv2.warpPerspective(im2, warp_matrix, (sz[1], sz[0]),
+                                              flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+        else:
+            # Use warpAffine for Translation, Euclidean and Affine
+            im2_aligned = cv2.warpAffine(im2, warp_matrix, (sz[1], sz[0]),
+                                         flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+
+        # Show final results
+        cv2.imwrite("Image_1.jpg", im1)
+        cv2.imwrite("Image_2.jpg", im2)
+        cv2.imwrite("Aligned_Image_2.jpg", im2_aligned)
+
+def rect(i, x, y, w, h, c):
+    cv2.rectangle(i, (x, y), (x+w, y+h), c)
