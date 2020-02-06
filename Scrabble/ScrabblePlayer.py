@@ -378,6 +378,7 @@ if __name__ == '__main__':
     #test = ScrabblePlayer("data/real_board.jpg", ["a"], True)
     #test.draw()
     test = Image_processor("data/real_board.jpg")
-    test.run()
+    test.get_corners()
+    print("test")
 
 
