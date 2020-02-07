@@ -86,22 +86,25 @@ class Image_processor:
         return placed
 
     def template_identify(self, img):
-        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        im_paths = [f"data/Tile_images/Scrabble-tile-{letter}-wood.jpg" for letter in alphabet]
+        alphabet = "ABCDEFGHIJKLMNOP"
+        #im_paths = [f"data/Tile_images/Scrabble-tile-{letter}-wood.jpg" for letter in alphabet]
+        im_paths = [f"data/real_templates/{letter}.jpg" for letter in alphabet]
         max_val = 0
         best_letter = ""
+        h, w = img.shape[:2]
         for path, letter in zip(im_paths, alphabet):
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             template = cv2.imread(path, 0)
-            scale = img_gray.shape[1] / 25
-            template = imutils.resize(template, width=int(scale))
-            w, h = template.shape[::-1]
+            template = imutils.resize(template, width=int(min((w, h))))
             res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
             (_, maxVal, _, maxLoc) = cv2.minMaxLoc(res)
+            # maxVal = self.multi_scale_template(img, template)
+            print(letter, maxVal)
             if maxVal > max_val:
                 max_val = maxVal
                 best_letter = letter
         return best_letter
+
     def online_image(self):
         # https://stackoverflow.com/questions/48954246/find-sudoku-grid-using-opencv-and-python
         gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
@@ -273,13 +276,14 @@ class Image_processor:
     def grid(self):
         (x1, y1), (x2, y2) = self.get_corners()
         img = self.img[y1:y2, x1:x2]
+        imgs = self.padded_crop(img, self.rows, self.cols, .1)
+        i = 65
+        cv2.imwrite("section.jpg", imgs[i])
+        # imgs[63] = cv2.cvtColor(imgs[63], cv2.COLOR_RGB2GRAY)
+        # self.create_neural_network()
+        # print(self.nn.predict([cv2.resize(imgs[63], (28, 28))]))
+        print(self.template_identify(imgs[i]))
         self.draw_grid(img, self.rows, self.cols)
-        imgs = self.crop(img, self.rows, self.cols)
-        cv2.imwrite("section.jpg", imgs[63])
-        imgs[63] = cv2.cvtColor(imgs[63], cv2.COLOR_RGB2GRAY)
-        self.create_neural_network()
-        print(self.nn.predict([cv2.resize(imgs[63], (28, 28))]))
-        print(self.template_identify(imgs[63]))
 
     def get_corners(self):
         size = 27
@@ -310,7 +314,7 @@ class Image_processor:
 
 
     def multi_scale_template(self, img, template):
-        template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        #template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
         template = cv2.Canny(template, 50, 200)
         (tH, tW) = template.shape[:2]
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -336,13 +340,14 @@ class Image_processor:
                 found = (maxVal, maxLoc, r)
         # unpack the bookkeeping variable and compute the (x, y) coordinates
         # of the bounding box based on the resized ratio
-        (_, maxLoc, r) = found
+        (mv, maxLoc, r) = found
         (startX, startY) = (int(maxLoc[0] * r), int(maxLoc[1] * r))
         (endX, endY) = (int((maxLoc[0] + tW) * r), int((maxLoc[1] + tH) * r))
         # draw a bounding box around the detected result and display the image
         cv2.rectangle(img, (startX, startY), (endX, endY), (0, 0, 255), 5)
         print(startX, endX)
         cv2.imwrite("Image.jpg", img)
+        return mv
 
     @staticmethod
     def draw_grid(img, rows, cols):
@@ -369,6 +374,22 @@ class Image_processor:
                 y1 = int(r * y_step)
                 x2 = int(x1 + x_step)
                 y2 = int(y1 + y_step)
+                section = img[y1: y2, x1: x2]
+                imgs.append(section)
+        return imgs
+
+    @staticmethod
+    def padded_crop(img, rows, cols, pad=.5):
+        h, w = img.shape[:2]
+        x_step = w / cols
+        y_step = h / rows
+        imgs = []
+        for r in range(rows):
+            for c in range(cols):
+                x1 = int(c * x_step) if c == 0 else int((c-pad) * x_step)
+                y1 = int(r * y_step) if r == 0 else int((r-pad) * y_step)
+                x2 = int(x1 + x_step) if c == cols-1 else int((c+1+pad) * x_step)
+                y2 = int(y1 + y_step) if r == rows-1 else int((r+1+pad) * y_step)
                 section = img[y1: y2, x1: x2]
                 imgs.append(section)
         return imgs
@@ -420,6 +441,7 @@ class Image_processor:
         cv2.imwrite("Image_1.jpg", im1)
         cv2.imwrite("Image_2.jpg", im2)
         cv2.imwrite("Aligned_Image_2.jpg", im2_aligned)
+
 
 def rect(i, x, y, w, h, c):
     cv2.rectangle(i, (x, y), (x+w, y+h), c)
